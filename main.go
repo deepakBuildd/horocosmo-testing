@@ -56,7 +56,7 @@ func main() {
 
 	batchSize := 5000 // Define the batch size
 	// // Track batch number
-	batch := 01
+	batch := 00
 
 	// // Fetch 100 random entries
 	entries, err := FetchRandomBirthCharts(db, batch*batchSize, batchSize)
