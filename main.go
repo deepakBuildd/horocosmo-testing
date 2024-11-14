@@ -77,7 +77,7 @@ func main() {
 	// }
 
 	log.Printf("Fetched %d entries\n", len(entries))
-
+ 
 	var verifiedEntries []BirthChart
 	var passed, failed int
 
