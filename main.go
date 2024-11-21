@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -28,8 +27,8 @@ type GenerateResponse struct {
 	Status  int    `json:"status"`
 	Message string `json:"message"`
 	Data    struct {
-		D1Rashi   []int    `json:"lalRashi"`
-		D1Planets []string `json:"lalPlanets"`
+		KpRashi   []int    `json:"kpRashi"`
+		KpPlanets []string `json:"kpPlanets"`
 	} `json:"data"`
 }
 
@@ -38,9 +37,9 @@ type VerifyResponse struct {
 	Message string `json:"message"`
 	Data    struct {
 		Data []struct {
-			Sign        int      `json:"sign"`
-			SignName    string   `json:"sign_name"`
-			PlanetSmall []string `json:"planet_small"`
+			PlanetName string `json:"planet_name"`
+			House      int    `json:"house"`
+			Sign       string `json:"sign"`
 		} `json:"data"`
 	} `json:"data"`
 }
@@ -53,27 +52,27 @@ func main() {
 	}
 	defer db.Close()
 
-	batchSize := 100 // Define the batch size
+	// batchSize := 1 // Define the batch size
 	// // Track batch number
 	batch := 0
 
 	// Fetch random entries
-	entries, err := FetchRandomBirthCharts(db, batch*batchSize, batchSize)
-	if err != nil {
-		log.Fatalf("Failed to fetch random birth charts: %v", err)
-	}
+	// entries, err := FetchRandomBirthCharts(db, batch*batchSize, batchSize)
+	// if err != nil {
+	// 	log.Fatalf("Failed to fetch random birth charts: %v", err)
+	// }
 
 	// Read JSON file
-	// data, err := os.ReadFile("batch0.json") // replace "data.json" with the path to your JSON file
-	// if err != nil {
-	// 	log.Fatalf("Failed to read file: %v", err)
-	// }
+	data, err := os.ReadFile("batch4.json") // replace "data.json" with the path to your JSON file
+	if err != nil {
+		log.Fatalf("Failed to read file: %v", err)
+	}
 
-	// // Parse JSON data into a slice of Entry structs
-	// var entries []BirthChart
-	// if err := json.Unmarshal(data, &entries); err != nil {
-	// 	log.Fatalf("Failed to parse JSON: %v", err)
-	// }
+	// Parse JSON data into a slice of Entry structs
+	var entries []BirthChart
+	if err := json.Unmarshal(data, &entries); err != nil {
+		log.Fatalf("Failed to parse JSON: %v", err)
+	}
 
 	log.Printf("Fetched %d entries\n", len(entries))
 
@@ -83,28 +82,28 @@ func main() {
 	// Iterate through entries and validate with APIs
 	for _, entry := range entries {
 
-		deletedRows, err := DeleteBirthChartByEntry(db, entry)
-		if err != nil {
-			log.Fatalf("Failed to delete birth_chart_infos entry: %v", err)
-		} else {
-			log.Printf("Successfully deleted %d birth_chart_infos entry(ies)", deletedRows)
-		}
-
-		// isValid := ValidateEntry(entry)
-
-		// if isValid {
-		// 	log.Printf("👑👑👑 Entry %d is valid\n", entry.ID)
-		// 	passed++
+		// deletedRows, err := DeleteBirthChartByEntry(db, entry)
+		// if err != nil {
+		// 	log.Fatalf("Failed to delete birth_chart_infos entry: %v", err)
 		// } else {
-		// 	log.Printf("🥁🥁🥁 Entry %d is invalid\n", entry.ID)
-		// 	verifiedEntries = append(verifiedEntries, entry)
-		// 	failed++
+		// 	log.Printf("Successfully deleted %d birth_chart_infos entry(ies)", deletedRows)
 		// }
-		// time.Sleep(time.Second) // Avoid hitting the API too frequently
+
+		isValid := ValidateEntry(entry)
+
+		if isValid {
+			log.Printf("👑👑👑 Entry %d is valid\n", entry.ID)
+			passed++
+		} else {
+			log.Printf("🥁🥁🥁 Entry %d is invalid\n", entry.ID)
+			verifiedEntries = append(verifiedEntries, entry)
+			failed++
+		}
+		time.Sleep(time.Second) // Avoid hitting the API too frequently
 	}
 
 	// Save verified entries to JSON
-	saveToJSON(verifiedEntries, fmt.Sprintf("lal_batch%d.json", batch))
+	saveToJSON(verifiedEntries, fmt.Sprintf("kp_batch%d.json", batch))
 
 	log.Printf("Summary: Tested %d entries - %d passed, %d failed.\n", len(entries), passed, failed)
 }
@@ -301,7 +300,7 @@ func ValidateEntry(entry BirthChart) bool {
 }
 
 func FetchGenerateData(entry BirthChart) (*GenerateResponse, error) {
-	url := fmt.Sprintf("http://localhost:3000/v2/lal-kitab?type=birth&name=sanjay&date=%s&time=%s&lat=%s&lon=%s",
+	url := fmt.Sprintf("http://localhost:3000/v2/kp-chart?type=birth&name=sanjay&date=%s&time=%s&lat=%s&lon=%s",
 		entry.Date, entry.Time, entry.Lat, entry.Lon)
 
 	log.Println("Generate API URL:", url)
@@ -320,7 +319,7 @@ func FetchGenerateData(entry BirthChart) (*GenerateResponse, error) {
 
 func FetchVerifyData(entry BirthChart) (*VerifyResponse, error) {
 	day, month, year, hour, min := parseDateTime(entry.Date, entry.Time)
-	url := fmt.Sprintf("http://localhost:3000/birth-details?day=%d&month=%d&year=%d&hour=%d&min=%d&lat=%s&lon=%s",
+	url := fmt.Sprintf("http://localhost:3000/astro-api?day=%d&month=%d&year=%d&hour=%d&min=%d&lat=%s&lon=%s&api=kp",
 		day, month, year, hour, min, entry.Lat, entry.Lon)
 
 	log.Println("Paid Verify API URL:", url)
@@ -343,156 +342,110 @@ func parseDateTime(date, timeStr string) (int, int, int, int, int) {
 	return parsedDate.Day(), int(parsedDate.Month()), parsedDate.Year(), parsedTime.Hour(), parsedTime.Minute()
 }
 
-// Static structure to hold generated chart data
-type GenerateData struct {
-	D1Rashi   []int
-	D1Planets []string
-}
-
-// Static structure to hold verified chart data
-type VerifiedData struct {
-	Sign        int
-	SignName    string
-	PlanetSmall []string
-}
-
 // SignMap maps rashi names to indices.
 var SignMap = map[string]int{
 	"Aries": 1, "Taurus": 2, "Gemini": 3, "Cancer": 4, "Leo": 5, "Virgo": 6,
 	"Libra": 7, "Scorpio": 8, "Sagittarius": 9, "Capricorn": 10, "Aquarius": 11, "Pisces": 12,
 }
 
-// Static test data based on the logs
-// var genData = GenerateData{
-// 	D1Rashi:   []int{5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4},
-// 	D1Planets: []string{"As ₀₅", "", "", "Ma ₀₁ Ve ₀₈R Ke ₁₂", "Su ₂₅", "Me ₀₀c", "", "Mo ₁₅", "", "Sa ₂₉R Ra ₁₂", "", "Ju ↑ ₂₂R"},
-// }
-
-// {
-// 	"place": "Houston, Texas",
-// 	"country": "United States",
-// 	"latitude": "29.787514",
-// 	"longitude": "-95.710895"
-// },
-// {
-
-// var verData = []VerifiedData{
-// 	{"Sun", 5, "Sagittarius"},
-// 	{"Moon", 8, "Pisces"},
-// 	{"Mars", 4, "Scorpio"},
-// 	{"Mercury", 6, "Capricorn"},
-// 	{"Jupiter", 12, "Cancer"},
-// 	{"Venus", 4, "Scorpio"},
-// 	{"Saturn", 10, "Taurus"},
-// 	{"Rahu", 10, "Taurus"},
-// 	{"Ketu", 4, "Scorpio"},
-// 	{"Ascendant", 1, "Leo"},
-// }
-
-// func main() {
-// 	// Run compareCharts with static data
-// 	result := CompareCharts(genData, verData)
-// 	fmt.Println("Comparison result:", result)
-// }
-
 func CompareCharts(
 	genData struct {
-		D1Rashi   []int    `json:"lalRashi"`
-		D1Planets []string `json:"lalPlanets"`
+		KpRashi   []int    `json:"kpRashi"`
+		KpPlanets []string `json:"kpPlanets"`
 	},
 	verData []struct {
-		Sign        int      `json:"sign"`
-		SignName    string   `json:"sign_name"`
-		PlanetSmall []string `json:"planet_small"`
+		PlanetName string `json:"planet_name"`
+		House      int    `json:"house"`
+		Sign       string `json:"sign"`
 	}) bool {
 
 	logrus.WithFields(logrus.Fields{
-		"d1Rashi":   genData.D1Rashi,
-		"d1Planets": genData.D1Planets,
+		"kpRashi":   genData.KpRashi,
+		"kpPlanets": genData.KpPlanets,
 		"verData":   verData,
 	}).Info("Comparing charts")
 
-	// Create a map for verified data by sign to make lookup easier
-	verifyMap := make(map[int]struct {
-		signIndex int
-		planets   []string
-	})
-
-	// Fill verifyMap based on verified data (verData) structure
-	for _, item := range verData {
-		signIndex := item.Sign
-		verifyMap[signIndex] = struct {
-			signIndex int
-			planets   []string
-		}{
-			signIndex: signIndex,
-			planets:   item.PlanetSmall,
-		}
+	// Validate input data lengths
+	if len(genData.KpRashi) != len(genData.KpPlanets) {
+		logrus.Error("Mismatch in genData lengths")
+		return false
 	}
 
-	// Iterate over each house and compare with generated data
-	for house := range verifyMap {
-		if genData.D1Rashi[house-1] != verifyMap[house].signIndex {
-			logrus.Infof("Mismatch in Rashi for house %d: Expected %d, Found %d",
-				house, verifyMap[house].signIndex, genData.D1Rashi[house-1])
+	// Group verification data by house
+	verDataByHouse := make(map[int][]struct {
+		PlanetName string
+		Sign       string
+	})
+
+	for _, ver := range verData {
+		verDataByHouse[ver.House] = append(verDataByHouse[ver.House], struct {
+			PlanetName string
+			Sign       string
+		}{
+			PlanetName: ver.PlanetName,
+			Sign:       ver.Sign,
+		})
+	}
+
+	logrus.Info("verDataByHouse:", verDataByHouse)
+
+	// Track planets from generated data
+	for i, planetShortNames := range genData.KpPlanets {
+		// Skip empty planet names
+		if planetShortNames == "" {
+			continue
+		}
+
+		// Split multiple planet short names
+		splitPlanets := strings.Fields(planetShortNames)
+		logrus.Info("Splitplanets:", splitPlanets)
+
+		// Current house is i+1 (as houses are 1-indexed)
+		currentHouse := i + 1
+		currentRashi := genData.KpRashi[i]
+
+		// Find house in verification data
+		housePlanets, houseExists := verDataByHouse[currentHouse]
+		if !houseExists {
+			logrus.Errorf("No planets found in house %d", currentHouse)
 			return false
 		}
 
-		// Extract planets from generated data using regex
-		var planetRegex = regexp.MustCompile(`\b[A-Za-z]{2}\b`)
-		genPlanets := planetRegex.FindAllString(genData.D1Planets[house-1], -1)
+		// Check each planet in the current house string
+		for _, planetShortName := range splitPlanets {
+			logrus.Info("planetShortName:", planetShortName)
 
-		logrus.Info("Generating planets for house ", house, ":", genPlanets)
-		logrus.Info("verifying ", verifyMap[house].planets)
-		logrus.Info("genPlanets ", len(genPlanets))
-		logrus.Info("length ", len(verifyMap[house].planets))
-		logrus.Info("check 1", house == 1)
-		logrus.Info("check 2", len(genPlanets) != (len(verifyMap[house].planets)+1))
-		logrus.Info("check 3", house == 1 && len(genPlanets) != (len(verifyMap[house].planets)+1))
-		logrus.Info("check 4", len(genPlanets) != len(verifyMap[house].planets) || house == 1 && len(genPlanets) != (len(verifyMap[house].planets)+1))
+			// Get full planet name
+			fullPlanetName, ok := PlanetNameMap[planetShortName]
+			logrus.Info("fullPlanetName:", fullPlanetName)
 
-		// Check if planets list lengths match
-		if house != 1 && len(genPlanets) != len(verifyMap[house].planets) {
-			logrus.Infof("Mismatch in planets count for house %d: Expected %d, Found %d",
-				house, len(verifyMap[house].planets), len(genPlanets))
-			return false
-		}
-
-		// Check if planets list lengths match
-		if house == 1 && len(genPlanets) != (len(verifyMap[house].planets)+1) {
-			logrus.Infof("Mismatch in planets count for house %d: Expected %d, Found %d",
-				house, len(verifyMap[house].planets), len(genPlanets))
-			return false
-		}
-
-		// Check if each planet in generated data matches the verified data for that house
-		for _, genPlanet := range genPlanets {
-			logrus.Info("genPlanet: ", genPlanet)
-			logrus.Info("genPlanet: ", len(genPlanet))
-			genPlanetName := genPlanet[:2]
-			logrus.Info("genPlanetName: ", genPlanetName)
-			logrus.Info("genPlanetName: ", len(genPlanetName))
-			logrus.Info("verifyMap[house].planets : ", verifyMap[house].planets)
-
-			found := false
-
-			if genPlanetName == "As" {
-				found = true
-				break
+			if !ok {
+				logrus.Errorf("Unknown planet short name: %s", planetShortName)
+				return false
 			}
 
-			for _, verPlanet := range verifyMap[house].planets {
+			// Check if planet is in this house with correct sign
+			planetFound := false
+			for _, housePlanet := range housePlanets {
+				logrus.Info("housePlanet:", housePlanet)
 
-				logrus.Info("verPlanet: ", verPlanet)
-				logrus.Info("verPlanet: ", len(verPlanet))
+				expectedSign, ok := SignMap[housePlanet.Sign]
+				logrus.Info("expectedSign:", expectedSign)
 
-				if genPlanetName == strings.Trim(verPlanet, " ") {
-					found = true
+				if !ok {
+					logrus.Errorf("Unknown sign: %s", housePlanet.Sign)
+					return false
+				}
+
+				if housePlanet.PlanetName == fullPlanetName && expectedSign == currentRashi {
+					planetFound = true
 					break
 				}
 			}
-			if !found {
-				logrus.Infof("Planet %s in house %d does not match verified data", genPlanetName, house)
+
+			if !planetFound {
+				logrus.Errorf("Planet %s not found in house %d with rashi %d",
+					fullPlanetName, currentHouse, currentRashi)
 				return false
 			}
 		}
@@ -501,20 +454,20 @@ func CompareCharts(
 	return true
 }
 
-// var PlanetNameMap = map[string]string{
-// 	"As": "Ascendant",
-// 	"Ke": "Ketu",
-// 	"Sa": "Saturn",
-// 	"Ma": "Mars",
-// 	"Ve": "Venus",
-// 	"Su": "Sun",
-// 	"Me": "Mercury",
-// 	"Ra": "Rahu",
-// 	"Mo": "Moon",
-// 	"Ju": "Jupiter",
-// }
+var PlanetNameMap = map[string]string{
+	"As": "Ascendant",
+	"Ke": "Ketu",
+	"Sa": "Saturn",
+	"Ma": "Mars",
+	"Ve": "Venus",
+	"Su": "Sun",
+	"Me": "Mercury",
+	"Ra": "Rahu",
+	"Mo": "Moon",
+	"Ju": "Jupiter",
+}
 
-// Helper to check if slice contains a string
+// // Helper to check if slice contains a string
 // func contains(slice []string, item string) bool {
 // 	for _, s := range slice {
 // 		// logrus.Info("slice:", s, "item:", item, "equal:", s == item)
