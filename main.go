@@ -32,15 +32,18 @@ type GenerateResponse struct {
 	} `json:"data"`
 }
 
+type Data struct {
+	Signs        []int    `json:"signs"`
+	Planets      []string `json:"planets"`
+	PlanetsSmall []string `json:"planets_small"`
+	PlanetSigns  []int    `json:"planet_signs"`
+}
+
 type VerifyResponse struct {
 	Status  int    `json:"status"`
 	Message string `json:"message"`
 	Data    struct {
-		Data []struct {
-			PlanetName string `json:"planet_name"`
-			House      int    `json:"house"`
-			Sign       string `json:"sign"`
-		} `json:"data"`
+		Data []Data `json:"data"`
 	} `json:"data"`
 }
 
@@ -353,11 +356,7 @@ func CompareCharts(
 		KpRashi   []int    `json:"kpRashi"`
 		KpPlanets []string `json:"kpPlanets"`
 	},
-	verData []struct {
-		PlanetName string `json:"planet_name"`
-		House      int    `json:"house"`
-		Sign       string `json:"sign"`
-	}) bool {
+	verData []Data) bool {
 
 	logrus.WithFields(logrus.Fields{
 		"kpRashi":   genData.KpRashi,
@@ -371,25 +370,7 @@ func CompareCharts(
 		return false
 	}
 
-	// Group verification data by house
-	verDataByHouse := make(map[int][]struct {
-		PlanetName string
-		Sign       string
-	})
-
-	for _, ver := range verData {
-		verDataByHouse[ver.House] = append(verDataByHouse[ver.House], struct {
-			PlanetName string
-			Sign       string
-		}{
-			PlanetName: ver.PlanetName,
-			Sign:       ver.Sign,
-		})
-	}
-
-	logrus.Info("verDataByHouse:", verDataByHouse)
-
-	// Track planets from generated data
+	// Iterate through generated data
 	for i, planetShortNames := range genData.KpPlanets {
 		// Skip empty planet names
 		if planetShortNames == "" {
@@ -398,54 +379,55 @@ func CompareCharts(
 
 		// Split multiple planet short names
 		splitPlanets := strings.Fields(planetShortNames)
-		logrus.Info("Splitplanets:", splitPlanets)
 
 		// Current house is i+1 (as houses are 1-indexed)
 		currentHouse := i + 1
 		currentRashi := genData.KpRashi[i]
 
-		// Find house in verification data
-		housePlanets, houseExists := verDataByHouse[currentHouse]
-		if !houseExists {
-			logrus.Errorf("No planets found in house %d", currentHouse)
+		// Verify rashi matches first sign in the entry's signs array
+		if verData[i].Signs[0] != currentRashi {
+			logrus.Errorf("Rashi mismatch for house %d: expected %d, got %d",
+				currentHouse, currentRashi, verData[i].Signs[0])
 			return false
 		}
 
-		// Check each planet in the current house string
+		// Check each planet in the current house
 		for _, planetShortName := range splitPlanets {
-			logrus.Info("planetShortName:", planetShortName)
-
 			// Get full planet name
 			fullPlanetName, ok := PlanetNameMap[planetShortName]
-			logrus.Info("fullPlanetName:", fullPlanetName)
-
 			if !ok {
 				logrus.Errorf("Unknown planet short name: %s", planetShortName)
 				return false
 			}
 
-			// Check if planet is in this house with correct sign
+			if fullPlanetName == "Ascendant" {
+				continue
+			}
+
+			// Check if planet exists in verification data
 			planetFound := false
-			for _, housePlanet := range housePlanets {
-				logrus.Info("housePlanet:", housePlanet)
-
-				expectedSign, ok := SignMap[housePlanet.Sign]
-				logrus.Info("expectedSign:", expectedSign)
-
-				if !ok {
-					logrus.Errorf("Unknown sign: %s", housePlanet.Sign)
-					return false
-				}
-
-				if housePlanet.PlanetName == fullPlanetName && expectedSign == currentRashi {
+			for j, smallPlanet := range verData[i].PlanetsSmall {
+				logrus.WithFields(logrus.Fields{
+					"smallPlanet":     smallPlanet,
+					"planetShortName": planetShortName,
+					"planetMatch":     strings.TrimSpace(smallPlanet) == planetShortName,
+				}).Info("Checking planet ...")
+				if strings.TrimSpace(smallPlanet) == planetShortName {
+					// Verify planet name matches
+					if len(verData[i].Planets) > j &&
+						verData[i].Planets[j] != fullPlanetName {
+						logrus.Errorf("Planet name mismatch: short %s, full %s",
+							planetShortName, fullPlanetName)
+						return false
+					}
 					planetFound = true
 					break
 				}
 			}
 
 			if !planetFound {
-				logrus.Errorf("Planet %s not found in house %d with rashi %d",
-					fullPlanetName, currentHouse, currentRashi)
+				logrus.Errorf("Planet %s not found in house %d",
+					fullPlanetName, currentHouse)
 				return false
 			}
 		}
