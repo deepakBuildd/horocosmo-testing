@@ -53,7 +53,7 @@ func main() {
 	}
 	defer db.Close()
 
-	batchSize := 10 // Define the batch size
+	batchSize := 100 // Define the batch size
 	// // Track batch number
 	batch := 0
 
@@ -64,7 +64,7 @@ func main() {
 	}
 
 	// Read JSON file
-	// data, err := os.ReadFile("batch3.json") // replace "data.json" with the path to your JSON file
+	// data, err := os.ReadFile("batch0.json") // replace "data.json" with the path to your JSON file
 	// if err != nil {
 	// 	log.Fatalf("Failed to read file: %v", err)
 	// }
@@ -83,21 +83,23 @@ func main() {
 	// Iterate through entries and validate with APIs
 	for _, entry := range entries {
 
-		// if err := DeleteBirthChartByID(db, entry.ID); err != nil {
-		// 	log.Printf("Failed to delete entry %d: %v", entry.ID, err)
-		// 	continue
-		// }
-
-		isValid := validateEntry(entry)
-
-		if isValid {
-			log.Printf("👑👑👑 Entry %d is valid\n", entry.ID)
-			passed++
+		deletedRows, err := DeleteBirthChartByEntry(db, entry)
+		if err != nil {
+			log.Fatalf("Failed to delete birth_chart_infos entry: %v", err)
 		} else {
-			log.Printf("🥁🥁🥁 Entry %d is invalid\n", entry.ID)
-			verifiedEntries = append(verifiedEntries, entry)
-			failed++
+			log.Printf("Successfully deleted %d birth_chart_infos entry(ies)", deletedRows)
 		}
+
+		// isValid := ValidateEntry(entry)
+
+		// if isValid {
+		// 	log.Printf("👑👑👑 Entry %d is valid\n", entry.ID)
+		// 	passed++
+		// } else {
+		// 	log.Printf("🥁🥁🥁 Entry %d is invalid\n", entry.ID)
+		// 	verifiedEntries = append(verifiedEntries, entry)
+		// 	failed++
+		// }
 		// time.Sleep(time.Second) // Avoid hitting the API too frequently
 	}
 
@@ -107,22 +109,133 @@ func main() {
 	log.Printf("Summary: Tested %d entries - %d passed, %d failed.\n", len(entries), passed, failed)
 }
 
+// DeleteUserByEntry deletes a row from the users table based on matching the latitude, longitude, time, date_of_birth, and location fields.
+func DeleteUserByEntry(db *sql.DB, entry BirthChart) (int64, error) {
+	// Prepare the DELETE SQL statement with placeholders for values
+	stmt, err := db.Prepare(`DELETE FROM users 
+		WHERE latitude = $1 
+		AND longitude = $2 
+		AND time = $3 
+		AND date_of_birth = $4;`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	// Execute the DELETE statement with the specified field values
+	res, err := stmt.Exec(entry.Lat, entry.Lon, entry.Time, entry.Date)
+	if err != nil {
+		return 0, err
+	}
+
+	// Get the number of rows affected
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return rowsAffected, nil
+}
+
+// DeleteBirthChartByEntry deletes a row from the birth_chart_infos table based on matching lat, lon, date, and time fields.
+func DeleteBirthChartByEntry(db *sql.DB, entry BirthChart) (int64, error) {
+	// Begin a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	// Find all birth_chart_info IDs that match the entry criteria
+	rows, err := tx.Query(`SELECT id FROM birth_chart_infos WHERE lat = $1 AND lon = $2 AND date = $3 AND time = $4`, entry.Lat, entry.Lon, entry.Date, entry.Time)
+	if err != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("failed to retrieve birth_chart_info ids: %v", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("failed to scan id: %v", err)
+		}
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("error iterating rows: %v", err)
+	}
+
+	// Track rows deleted for the birth chart itself
+	var totalRowsDeleted int64
+
+	// Delete associated records for each found ID
+	for _, id := range ids {
+		// Delete from prediction_infos
+		if _, err := tx.Exec(`DELETE FROM prediction_infos WHERE birth_chart_info_id = $1`, id); err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("failed to delete from prediction_infos: %v", err)
+		}
+
+		// Delete from sign_data
+		if _, err := tx.Exec(`DELETE FROM sign_data WHERE birth_chart_info_id = $1`, id); err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("failed to delete from sign_data: %v", err)
+		}
+
+		// Delete from lk_prediction_infos
+		if _, err := tx.Exec(`DELETE FROM lk_prediction_infos WHERE birth_chart_info_id = $1`, id); err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("failed to delete from lk_prediction_infos: %v", err)
+		}
+
+		// Delete the main birth_chart_info entry
+		res, err := tx.Exec(`DELETE FROM birth_chart_infos WHERE id = $1`, id)
+		if err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("failed to delete birth_chart_info entry: %v", err)
+		}
+
+		// Count the number of rows deleted for birth_chart_infos
+		rowsDeleted, err := res.RowsAffected()
+		if err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("failed to retrieve rows affected: %v", err)
+		}
+		totalRowsDeleted += rowsDeleted
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	return totalRowsDeleted, nil
+}
+
 // DeleteBirthChartByID deletes a row in the birth_chart_infos table based on the provided ID.
-func DeleteBirthChartByID(db *sql.DB, id int) error {
+func DeleteBirthChartByID(db *sql.DB, id int) (int64, error) {
 	// Prepare the DELETE SQL statement
 	stmt, err := db.Prepare("DELETE FROM birth_chart_infos WHERE id = $1;")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer stmt.Close()
 
 	// Execute the DELETE statement with the specified ID
-	_, err = stmt.Exec(id)
+	res, err := stmt.Exec(id)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	// Get the number of rows affected
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
 	}
 
-	return nil
+	return rowsAffected, nil
 }
 
 func FetchRandomBirthCharts(db *sql.DB, offset, limit int) ([]BirthChart, error) {
@@ -164,7 +277,7 @@ func saveToJSON(data []BirthChart, filename string) {
 	file.Write(jsonData)
 }
 
-func validateEntry(entry BirthChart) bool {
+func ValidateEntry(entry BirthChart) bool {
 	// Fetch data from both APIs (Generate API and Paid Verify API)
 	generateData, err := FetchGenerateData(entry)
 	if err != nil || generateData.Status != 200 {
